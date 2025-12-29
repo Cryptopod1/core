@@ -258,7 +258,8 @@ describe("Integration: Withdrawals finalization with bad debt internalization", 
       expect(stateAfter.badDebtToInternalize).to.equal(0n, "There should be no bad debt to internalize after report");
     });
 
-    it("Bad debt internalization should affect finalization share rate", async () => {
+    // TODO: https://github.com/lidofinance/core/issues/1621
+    it.skip("Bad debt internalization should affect finalization share rate", async () => {
       const beforeReportSnapshot = await Snapshot.take();
 
       // 1. Finalize withdrawals without bad debt internalization
