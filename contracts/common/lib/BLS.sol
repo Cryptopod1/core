@@ -223,7 +223,6 @@ library BLS12_381 {
 
             // === DST prime and initial hash ===
             let b0 := sha2(s, sub(dstPrime(add(0x02, o), 0), s)) // First SHA2 with DST index 0
-            mstore(0x20, b0) // Save `b0` for use in XOF loop
             mstore(s, b0) // Store b0 at start of buffer
             mstore(b, sha2(s, sub(dstPrime(add(0x20, s), 1), s))) // Store next hash at `b`
 
