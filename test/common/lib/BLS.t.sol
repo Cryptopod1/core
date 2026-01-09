@@ -378,13 +378,20 @@ contract BLSVerifyingKeyTest is Test {
     }
 
     function test_revertOnSha256PrecompileFailure() external {
-        vm.mockCall(address(0x02), bytes(""), bytes("")); // 0x02 = SHA256 precompile
+        vm.mockCallRevert(address(0x02), bytes(""), bytes("boom")); // 0x02 = SHA256 precompile
         vm.expectRevert(BLS12_381.Sha256PrecompileFailed.selector);
         harness.hashToG2(bytes32(uint256(1)));
         vm.clearMockedCalls();
     }
 
     function test_revertOnModExpPrecompileFailure() external {
+        vm.mockCallRevert(address(0x05), bytes(""), bytes("boom")); // 0x05 = ModExp precompile (EIP-198)
+        vm.expectRevert(BLS12_381.ModExpPrecompileFailed.selector);
+        harness.hashToG2(bytes32(uint256(1)));
+        vm.clearMockedCalls();
+    }
+
+    function test_revertOnModExpPrecompileReturnSizeMismatch() external {
         vm.mockCall(address(0x05), bytes(""), bytes("")); // 0x05 = ModExp precompile (EIP-198)
         vm.expectRevert(BLS12_381.ModExpPrecompileFailed.selector);
         harness.hashToG2(bytes32(uint256(1)));
@@ -401,6 +408,21 @@ contract BLSVerifyingKeyTest is Test {
         // Should not be zero and should have correct domain type prefix
         assertTrue(uint256(depositDomain) != 0, "Domain should not be zero");
         assertEq(bytes4(depositDomain), bytes4(0x03000000), "Domain type prefix should be DOMAIN_DEPOSIT");
+    }
+
+    function test_revertOnSha256PairReturnSizeMismatch() external {
+        vm.mockCall(address(0x02), bytes(""), bytes("")); // 0x02 = SHA256 precompile
+        vm.expectRevert(BLS12_381.Sha256PrecompileFailed.selector);
+        harness.computeDepositDomain(bytes4(0));
+        vm.clearMockedCalls();
+    }
+
+    function test_revertOnPubkeyRootReturnSizeMismatch() external {
+        PrecomputedDepositMessage memory message = LOCAL_MESSAGE_1();
+        vm.mockCall(address(0x02), bytes(""), bytes("")); // 0x02 = SHA256 precompile
+        vm.expectRevert(BLS12_381.Sha256PrecompileFailed.selector);
+        harness.depositMessageSigningRoot(message);
+        vm.clearMockedCalls();
     }
 
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/

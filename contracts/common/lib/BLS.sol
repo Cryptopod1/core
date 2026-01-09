@@ -185,7 +185,8 @@ library BLS12_381 {
 
             /// @dev Calls SHA256 precompile with `data_` of length `n_`, returns 32-byte hash
             function sha2(data_, n_) -> _h {
-                if iszero(and(eq(returndatasize(), 0x20), staticcall(gas(), SHA256, data_, n_, 0x00, 0x20))) {
+                let success := staticcall(gas(), SHA256, data_, n_, 0x00, 0x20)
+                if iszero(and(success, eq(returndatasize(), 0x20))) {
                     mstore(0x00, 0xdd5cab3e) // Revert with Sha256PrecompileFailed()
                     revert(0x1c, 0x04)
                 }
@@ -198,7 +199,8 @@ library BLS12_381 {
             /// @param b_ Pointer to the 64-byte big-endian `base` value (overwritten with the reduced value).
             function modfield(s_, b_) {
                 mcopy(add(s_, 0x60), b_, 0x40) // Copy base (64 bytes) into structure
-                if iszero(and(eq(returndatasize(), 0x40), staticcall(gas(), MOD_EXP, s_, 0x100, b_, 0x40))) {
+                let success := staticcall(gas(), MOD_EXP, s_, 0x100, b_, 0x40)
+                if iszero(and(success, eq(returndatasize(), 0x40))) {
                     mstore(0x00, 0x907060ec) // Revert with ModExpPrecompileFailed()
                     revert(0x1c, 0x04)
                 }
@@ -521,8 +523,9 @@ library BLS12_381 {
 
             // Call SHA-256 precompile with 64-byte input at memory 0x00.
             let success := staticcall(gas(), SHA256, 0x00, 0x40, 0x00, 0x20)
-            if iszero(success) {
-                revert(0, 0)
+            if iszero(and(success, eq(returndatasize(), 0x20))) {
+                mstore(0x00, 0xdd5cab3e) // Revert with Sha256PrecompileFailed()
+                revert(0x1c, 0x04)
             }
 
             // Load the resulting hash from memory
@@ -543,8 +546,10 @@ library BLS12_381 {
             calldatacopy(0x00, pubkey.offset, 48)
 
             // Call the SHA-256 precompile with the 64-byte input.
-            if iszero(staticcall(gas(), SHA256, 0x00, 0x40, 0x00, 0x20)) {
-                revert(0, 0)
+            let success := staticcall(gas(), SHA256, 0x00, 0x40, 0x00, 0x20)
+            if iszero(and(success, eq(returndatasize(), 0x20))) {
+                mstore(0x00, 0xdd5cab3e) // Revert with Sha256PrecompileFailed()
+                revert(0x1c, 0x04)
             }
 
             // Load the resulting SHA-256 hash
