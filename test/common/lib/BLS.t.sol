@@ -402,16 +402,14 @@ contract BLSVerifyingKeyTest is Test {
         harness.verifyDepositMessage(message);
     }
 
-    function test_amountSubGweiTruncation() external view {
-        // Amount not aligned to gwei boundary - library truncates to gwei via integer division
-        // This documents that sub-gwei amounts are truncated and verification still passes
+    function test_revertOnAmountSubGwei() external {
+        // Amount not aligned to gwei boundary should be rejected.
         PrecomputedDepositMessage memory message = LOCAL_MESSAGE_1();
 
-        // Original amount is 1 ether. Adding sub-gwei amounts doesn't change the signing root
-        // because (1 ether + X wei) / 1 gwei == 1 ether / 1 gwei for X < 1 gwei
-        message.deposit.amount = 1 ether + 1; // 1 wei extra - truncated to 1 ether in gwei
+        // Original amount is 1 ether. Adding sub-gwei amounts should revert instead of truncating.
+        message.deposit.amount = 1 ether + 1; // 1 wei extra - not gwei-aligned
 
-        // Verification should PASS because the signing root is unchanged after truncation
+        vm.expectRevert(BLS12_381.InvalidDepositAmount.selector);
         harness.verifyDepositMessage(message);
     }
 

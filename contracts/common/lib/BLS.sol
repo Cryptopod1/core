@@ -149,6 +149,9 @@ library BLS12_381 {
     /// @dev provided signature length is not 96
     error InvalidSignatureLength();
 
+    /// @dev deposit amount is not aligned to gwei
+    error InvalidDepositAmount();
+
     /// @dev provided block header is invalid
     error InvalidBlockHeader();
 
@@ -342,6 +345,7 @@ library BLS12_381 {
      * @param depositDomain The domain of the deposit message for the current chain.
      * @dev Reverts with `InvalidSignature` if the signature is invalid.
      * @dev Reverts with `InputHasInfinityPoints` if the input contains infinity points (zero values).
+     * @dev Reverts with `InvalidDepositAmount` if `amount` is not gwei-aligned.
      */
     function verifyDepositMessage(
         bytes calldata pubkey,
@@ -549,6 +553,7 @@ library BLS12_381 {
      * @notice calculates the signing root for deposit message
      * @dev per https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#compute_signing_root
      * @dev should not be confused with `depositDataRoot`, used for verifying BLS deposit signature
+     * @dev Reverts with `InvalidDepositAmount` if `amount` is not gwei-aligned.
      */
     function depositMessageSigningRoot(
         bytes calldata pubkey,
@@ -556,6 +561,7 @@ library BLS12_381 {
         bytes32 withdrawalCredentials,
         bytes32 depositDomain
     ) internal view returns (bytes32 root) {
+        if (amount % 1 gwei != 0) revert InvalidDepositAmount();
         root = sha256Pair(
             // merkle root of the deposit message
             sha256Pair(
