@@ -377,6 +377,20 @@ contract BLSVerifyingKeyTest is Test {
         assertTrue(isDifferent, "Different messages should produce different G2 points");
     }
 
+    function test_revertOnSha256PrecompileFailure() external {
+        vm.mockCall(address(0x02), bytes(""), bytes("")); // 0x02 = SHA256 precompile
+        vm.expectRevert(BLS12_381.Sha256PrecompileFailed.selector);
+        harness.hashToG2(bytes32(uint256(1)));
+        vm.clearMockedCalls();
+    }
+
+    function test_revertOnModExpPrecompileFailure() external {
+        vm.mockCall(address(0x05), bytes(""), bytes("")); // 0x05 = ModExp precompile (EIP-198)
+        vm.expectRevert(BLS12_381.ModExpPrecompileFailed.selector);
+        harness.hashToG2(bytes32(uint256(1)));
+        vm.clearMockedCalls();
+    }
+
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                  DEPOSIT DOMAIN EDGE CASES                  */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/

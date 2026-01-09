@@ -126,6 +126,12 @@ library BLS12_381 {
     /// @dev The pairing operation failed.
     error PairingFailed();
 
+    /// @dev The SHA256 precompile failed (selector: 0xdd5cab3e).
+    error Sha256PrecompileFailed();
+
+    /// @dev The ModExp precompile failed (selector: 0x907060ec).
+    error ModExpPrecompileFailed();
+
     /// @dev The MapFpToG2 operation failed.
     error MapFp2ToG2Failed();
 
@@ -179,7 +185,8 @@ library BLS12_381 {
             /// @dev Calls SHA256 precompile with `data_` of length `n_`, returns 32-byte hash
             function sha2(data_, n_) -> _h {
                 if iszero(and(eq(returndatasize(), 0x20), staticcall(gas(), SHA256, data_, n_, 0x00, 0x20))) {
-                    revert(calldatasize(), 0x00) // Revert on failure
+                    mstore(0x00, 0xdd5cab3e) // Revert with Sha256PrecompileFailed()
+                    revert(0x1c, 0x04)
                 }
                 _h := mload(0x00) // Load and return hash result
             }
@@ -191,7 +198,8 @@ library BLS12_381 {
             function modfield(s_, b_) {
                 mcopy(add(s_, 0x60), b_, 0x40) // Copy base (64 bytes) into structure
                 if iszero(and(eq(returndatasize(), 0x40), staticcall(gas(), MOD_EXP, s_, 0x100, b_, 0x40))) {
-                    revert(calldatasize(), 0x00) // Revert on failure
+                    mstore(0x00, 0x907060ec) // Revert with ModExpPrecompileFailed()
+                    revert(0x1c, 0x04)
                 }
             }
 
