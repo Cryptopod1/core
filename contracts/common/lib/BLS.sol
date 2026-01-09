@@ -8,6 +8,7 @@ import {SSZ} from "./SSZ.sol";
 
 /**
  * @notice Modified & stripped BLS Lib to support ETH beacon spec for validator deposit message verification.
+ * @dev Uses the Cancun-only `mcopy` opcode; deployment requires an EVM with Cancun support.
  * @author Lido
  * @author Solady (https://github.com/Vectorized/solady/blob/dcdfab80f4e6cb9ac35c91610b2a2ec42689ec79/src/utils/ext/ithaca/BLS.sol)
  * @author Ithaca (https://github.com/ithacaxyz/odyssey-examples/blob/main/chapter1/contracts/src/libraries/BLS.sol)
@@ -216,6 +217,8 @@ library BLS12_381 {
             // === Begin Main Logic ===
 
             let b := mload(0x40) // Allocate free memory pointer `b`
+            // Use scratch space for hashing buffers; we intentionally do not update the free memory pointer because
+            // the bytes are only needed within this assembly block and nothing is persisted beyond it.
             let s := add(b, 0x100) // Pointer to working buffer after `b`
             mstore(add(s, 0x40), message) // Store the message at `s + 0x40`
             let o := add(add(s, 0x40), 0x20) // Pointer after message
