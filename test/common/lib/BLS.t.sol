@@ -377,6 +377,27 @@ contract BLSVerifyingKeyTest is Test {
         assertTrue(isDifferent, "Different messages should produce different G2 points");
     }
 
+    function test_revertOnSha256PrecompileFailure() external {
+        vm.mockCallRevert(address(0x02), bytes(""), bytes("boom")); // 0x02 = SHA256 precompile
+        vm.expectRevert(BLS12_381.Sha256PrecompileFailed.selector);
+        harness.hashToG2(bytes32(uint256(1)));
+        vm.clearMockedCalls();
+    }
+
+    function test_revertOnModExpPrecompileFailure() external {
+        vm.mockCallRevert(address(0x05), bytes(""), bytes("boom")); // 0x05 = ModExp precompile (EIP-198)
+        vm.expectRevert(BLS12_381.ModExpPrecompileFailed.selector);
+        harness.hashToG2(bytes32(uint256(1)));
+        vm.clearMockedCalls();
+    }
+
+    function test_revertOnModExpPrecompileReturnSizeMismatch() external {
+        vm.mockCall(address(0x05), bytes(""), bytes("")); // 0x05 = ModExp precompile (EIP-198)
+        vm.expectRevert(BLS12_381.ModExpPrecompileFailed.selector);
+        harness.hashToG2(bytes32(uint256(1)));
+        vm.clearMockedCalls();
+    }
+
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                  DEPOSIT DOMAIN EDGE CASES                  */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
@@ -387,6 +408,21 @@ contract BLSVerifyingKeyTest is Test {
         // Should not be zero and should have correct domain type prefix
         assertTrue(uint256(depositDomain) != 0, "Domain should not be zero");
         assertEq(bytes4(depositDomain), bytes4(0x03000000), "Domain type prefix should be DOMAIN_DEPOSIT");
+    }
+
+    function test_revertOnSha256PairReturnSizeMismatch() external {
+        vm.mockCall(address(0x02), bytes(""), bytes("")); // 0x02 = SHA256 precompile
+        vm.expectRevert(BLS12_381.Sha256PrecompileFailed.selector);
+        harness.computeDepositDomain(bytes4(0));
+        vm.clearMockedCalls();
+    }
+
+    function test_revertOnPubkeyRootReturnSizeMismatch() external {
+        PrecomputedDepositMessage memory message = LOCAL_MESSAGE_1();
+        vm.mockCall(address(0x02), bytes(""), bytes("")); // 0x02 = SHA256 precompile
+        vm.expectRevert(BLS12_381.Sha256PrecompileFailed.selector);
+        harness.depositMessageSigningRoot(message);
+        vm.clearMockedCalls();
     }
 
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -402,16 +438,14 @@ contract BLSVerifyingKeyTest is Test {
         harness.verifyDepositMessage(message);
     }
 
-    function test_amountSubGweiTruncation() external view {
-        // Amount not aligned to gwei boundary - library truncates to gwei via integer division
-        // This documents that sub-gwei amounts are truncated and verification still passes
+    function test_revertOnAmountSubGwei() external {
+        // Amount not aligned to gwei boundary should be rejected.
         PrecomputedDepositMessage memory message = LOCAL_MESSAGE_1();
 
-        // Original amount is 1 ether. Adding sub-gwei amounts doesn't change the signing root
-        // because (1 ether + X wei) / 1 gwei == 1 ether / 1 gwei for X < 1 gwei
-        message.deposit.amount = 1 ether + 1; // 1 wei extra - truncated to 1 ether in gwei
+        // Original amount is 1 ether. Adding sub-gwei amounts should revert instead of truncating.
+        message.deposit.amount = 1 ether + 1; // 1 wei extra - not gwei-aligned
 
-        // Verification should PASS because the signing root is unchanged after truncation
+        vm.expectRevert(BLS12_381.InvalidDepositAmount.selector);
         harness.verifyDepositMessage(message);
     }
 

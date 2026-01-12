@@ -8,6 +8,7 @@ import {SSZ} from "./SSZ.sol";
 
 /**
  * @notice Modified & stripped BLS Lib to support ETH beacon spec for validator deposit message verification.
+ * @dev Uses the Cancun-only `mcopy` opcode; deployment requires an EVM with Cancun support.
  * @author Lido
  * @author Solady (https://github.com/Vectorized/solady/blob/dcdfab80f4e6cb9ac35c91610b2a2ec42689ec79/src/utils/ext/ithaca/BLS.sol)
  * @author Ithaca (https://github.com/ithacaxyz/odyssey-examples/blob/main/chapter1/contracts/src/libraries/BLS.sol)
@@ -126,6 +127,12 @@ library BLS12_381 {
     /// @dev The pairing operation failed.
     error PairingFailed();
 
+    /// @dev The SHA256 precompile failed (selector: 0xdd5cab3e).
+    error Sha256PrecompileFailed();
+
+    /// @dev The ModExp precompile failed (selector: 0x907060ec).
+    error ModExpPrecompileFailed();
+
     /// @dev The MapFpToG2 operation failed.
     error MapFp2ToG2Failed();
 
@@ -148,6 +155,9 @@ library BLS12_381 {
 
     /// @dev provided signature length is not 96
     error InvalidSignatureLength();
+
+    /// @dev deposit amount is not aligned to gwei
+    error InvalidDepositAmount();
 
     /// @dev provided block header is invalid
     error InvalidBlockHeader();
@@ -175,8 +185,10 @@ library BLS12_381 {
 
             /// @dev Calls SHA256 precompile with `data_` of length `n_`, returns 32-byte hash
             function sha2(data_, n_) -> _h {
-                if iszero(and(eq(returndatasize(), 0x20), staticcall(gas(), SHA256, data_, n_, 0x00, 0x20))) {
-                    revert(calldatasize(), 0x00) // Revert on failure
+                let success := staticcall(gas(), SHA256, data_, n_, 0x00, 0x20)
+                if iszero(and(success, eq(returndatasize(), 0x20))) {
+                    mstore(0x00, 0xdd5cab3e) // Revert with Sha256PrecompileFailed()
+                    revert(0x1c, 0x04)
                 }
                 _h := mload(0x00) // Load and return hash result
             }
@@ -187,8 +199,10 @@ library BLS12_381 {
             /// @param b_ Pointer to the 64-byte big-endian `base` value (overwritten with the reduced value).
             function modfield(s_, b_) {
                 mcopy(add(s_, 0x60), b_, 0x40) // Copy base (64 bytes) into structure
-                if iszero(and(eq(returndatasize(), 0x40), staticcall(gas(), MOD_EXP, s_, 0x100, b_, 0x40))) {
-                    revert(calldatasize(), 0x00) // Revert on failure
+                let success := staticcall(gas(), MOD_EXP, s_, 0x100, b_, 0x40)
+                if iszero(and(success, eq(returndatasize(), 0x40))) {
+                    mstore(0x00, 0x907060ec) // Revert with ModExpPrecompileFailed()
+                    revert(0x1c, 0x04)
                 }
             }
 
@@ -205,6 +219,8 @@ library BLS12_381 {
             // === Begin Main Logic ===
 
             let b := mload(0x40) // Allocate free memory pointer `b`
+            // Use scratch space for hashing buffers; we intentionally do not update the free memory pointer because
+            // the bytes are only needed within this assembly block and nothing is persisted beyond it.
             let s := add(b, 0x100) // Pointer to working buffer after `b`
             mstore(add(s, 0x40), message) // Store the message at `s + 0x40`
             let o := add(add(s, 0x40), 0x20) // Pointer after message
@@ -212,7 +228,6 @@ library BLS12_381 {
 
             // === DST prime and initial hash ===
             let b0 := sha2(s, sub(dstPrime(add(0x02, o), 0), s)) // First SHA2 with DST index 0
-            mstore(0x20, b0) // Save `b0` for use in XOF loop
             mstore(s, b0) // Store b0 at start of buffer
             mstore(b, sha2(s, sub(dstPrime(add(0x20, s), 1), s))) // Store next hash at `b`
 
@@ -342,6 +357,7 @@ library BLS12_381 {
      * @param depositDomain The domain of the deposit message for the current chain.
      * @dev Reverts with `InvalidSignature` if the signature is invalid.
      * @dev Reverts with `InputHasInfinityPoints` if the input contains infinity points (zero values).
+     * @dev Reverts with `InvalidDepositAmount` if `amount` is not gwei-aligned.
      */
     function verifyDepositMessage(
         bytes calldata pubkey,
@@ -507,8 +523,9 @@ library BLS12_381 {
 
             // Call SHA-256 precompile with 64-byte input at memory 0x00.
             let success := staticcall(gas(), SHA256, 0x00, 0x40, 0x00, 0x20)
-            if iszero(success) {
-                revert(0, 0)
+            if iszero(and(success, eq(returndatasize(), 0x20))) {
+                mstore(0x00, 0xdd5cab3e) // Revert with Sha256PrecompileFailed()
+                revert(0x1c, 0x04)
             }
 
             // Load the resulting hash from memory
@@ -529,8 +546,10 @@ library BLS12_381 {
             calldatacopy(0x00, pubkey.offset, 48)
 
             // Call the SHA-256 precompile with the 64-byte input.
-            if iszero(staticcall(gas(), SHA256, 0x00, 0x40, 0x00, 0x20)) {
-                revert(0, 0)
+            let success := staticcall(gas(), SHA256, 0x00, 0x40, 0x00, 0x20)
+            if iszero(and(success, eq(returndatasize(), 0x20))) {
+                mstore(0x00, 0xdd5cab3e) // Revert with Sha256PrecompileFailed()
+                revert(0x1c, 0x04)
             }
 
             // Load the resulting SHA-256 hash
@@ -549,6 +568,7 @@ library BLS12_381 {
      * @notice calculates the signing root for deposit message
      * @dev per https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#compute_signing_root
      * @dev should not be confused with `depositDataRoot`, used for verifying BLS deposit signature
+     * @dev Reverts with `InvalidDepositAmount` if `amount` is not gwei-aligned.
      */
     function depositMessageSigningRoot(
         bytes calldata pubkey,
@@ -556,6 +576,7 @@ library BLS12_381 {
         bytes32 withdrawalCredentials,
         bytes32 depositDomain
     ) internal view returns (bytes32 root) {
+        if (amount % 1 gwei != 0) revert InvalidDepositAmount();
         root = sha256Pair(
             // merkle root of the deposit message
             sha256Pair(
