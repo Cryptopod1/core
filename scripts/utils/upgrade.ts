@@ -19,7 +19,7 @@ const UPGRADE_PARAMETERS_FILE = process.env.UPGRADE_PARAMETERS_FILE;
 
 export { UpgradeParameters };
 
-export function readUpgradeParameters(): UpgradeParameters {
+export function readUpgradeParameters(skipValidation: boolean = false): UpgradeParameters {
   if (!UPGRADE_PARAMETERS_FILE) {
     throw new Error("UPGRADE_PARAMETERS_FILE is not set");
   }
@@ -30,6 +30,10 @@ export function readUpgradeParameters(): UpgradeParameters {
 
   const rawData = fs.readFileSync(UPGRADE_PARAMETERS_FILE, "utf8");
   const parsedData = toml.parse(rawData);
+
+  if (skipValidation) {
+    return parsedData as UpgradeParameters;
+  }
 
   try {
     return validateUpgradeParameters(parsedData);
