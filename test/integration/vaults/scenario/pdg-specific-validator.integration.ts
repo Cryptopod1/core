@@ -1,16 +1,24 @@
 import { expect } from "chai";
-import { hexlify, parseUnits, zeroPadBytes } from "ethers";
+import { toChecksumAddress } from "ethereumjs-util";
+import { hexlify, parseUnits } from "ethers";
 import { ethers } from "hardhat";
+import { getMode } from "hardhat.helpers";
 
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
-import { Dashboard, DepositContract, PredepositGuarantee, StakingVault } from "typechain-types";
-import { SSZBLSHelpers } from "typechain-types";
+import {
+  Dashboard,
+  DepositContract,
+  OssifiableProxy,
+  PredepositGuarantee,
+  SSZBLSHelpers,
+  StakingVault,
+} from "typechain-types";
 
 import {
-  computeDepositDataRoot,
   ether,
+  impersonate,
   LocalMerkleTree,
   PDGPolicy,
   prepareLocalMerkleTree,
@@ -18,17 +26,29 @@ import {
   toLittleEndian64,
   ValidatorStage,
 } from "lib";
-import {
-  createVaultWithDashboard,
-  ensurePredepositGuaranteeUnpaused,
-  getProtocolContext,
-  ProtocolContext,
-  setupLidoForVaults,
-} from "lib/protocol";
+import { getProtocolContext, ProtocolContext } from "lib/protocol";
 
 import { bailOnFailure, Snapshot } from "test/suite";
 
-describe("Scenario: PDG specific validator side-deposit, prove and top up", () => {
+/**
+ * Integration test for PDG with a specific validator deposited during soft launch
+ *
+ * This test ONLY runs in forking mode (MODE=forking) against mainnet.
+ * It uses an existing mainnet vault and upgrades PDG to Phase 2 implementation.
+ *
+ * Run with: yarn test:fork:pdg-validator
+ *
+ * Validator pubkey: 0x85b99739ca7fab3129c57a8cf63b2ad2494ddc02b3d26ce2eb07a3a1c67226fdea89c715b7560fd5dc642925356b7dcc
+ * Vault address: 0x62e0d92cf7b8752b5292b9bcbbace4cfa1633428
+ */
+describe("Scenario: PDG specific validator prove and top up on mainnet fork", function () {
+  // Skip entire suite if not in forking mode
+  before(function () {
+    if (getMode() !== "forking") {
+      this.skip();
+    }
+  });
+
   let ctx: ProtocolContext;
   let originalSnapshot: string;
 
@@ -39,39 +59,37 @@ describe("Scenario: PDG specific validator side-deposit, prove and top up", () =
 
   let owner: HardhatEthersSigner;
   let nodeOperator: HardhatEthersSigner;
-  let depositor: HardhatEthersSigner;
-  let sideDepositor: HardhatEthersSigner;
 
   // The specific validator pubkey to test, deposited during soft launch
   const VALIDATOR_PUBKEY =
     "0x85b99739ca7fab3129c57a8cf63b2ad2494ddc02b3d26ce2eb07a3a1c67226fdea89c715b7560fd5dc642925356b7dcc";
 
-  // Withdrawal credentials will be set to the vault's WC after vault creation
+  // Mainnet vault address
+  const MAINNET_VAULT_ADDRESS = toChecksumAddress("0x62e0d92cf7b8752b5292b9bcbbace4cfa1633428");
+
+  // Pre-deployed PDG implementation address
+  const PDG_IMPLEMENTATION_ADDRESS = toChecksumAddress("0xE78717192C45736DF0E4be55c0219Ee7f9aDdd0D");
+
+  // Withdrawal credentials will be set to the vault's WC
   let withdrawalCredentials: string;
 
   // Mock CL tree and proof data
   let mockCLtree: LocalMerkleTree;
   let slot: bigint;
 
-  before(async () => {
-    ctx = await getProtocolContext();
+  before(async function () {
+    if (getMode() !== "forking") {
+      return;
+    }
 
+    ctx = await getProtocolContext();
     originalSnapshot = await Snapshot.take();
 
-    await ensurePredepositGuaranteeUnpaused(ctx);
-    await setupLidoForVaults(ctx);
+    // Upgrade PDG to the pre-deployed implementation
+    await upgradePDG();
 
-    [owner, nodeOperator, depositor, sideDepositor] = await ethers.getSigners();
-
-    // Create a vault with dashboard
-    // nodeOperator is passed as both nodeOperator and nodeOperatorManager
-    ({ stakingVault, dashboard } = await createVaultWithDashboard(
-      ctx,
-      ctx.contracts.stakingVaultFactory,
-      owner,
-      nodeOperator,
-      nodeOperator, // nodeOperatorManager
-    ));
+    // Setup existing mainnet vault
+    await setupExistingVault();
 
     depositContract = await ethers.getContractAt("DepositContract", await stakingVault.DEPOSIT_CONTRACT());
     predepositGuarantee = ctx.contracts.predepositGuarantee;
@@ -79,17 +97,59 @@ describe("Scenario: PDG specific validator side-deposit, prove and top up", () =
     // Get the vault's withdrawal credentials
     withdrawalCredentials = await stakingVault.withdrawalCredentials();
 
-    // Fund the vault for later top-ups
-    await dashboard.connect(owner).fund({ value: ether("100") });
-
     // Initialize mock CL tree for proof generation
     slot = await predepositGuarantee.PIVOT_SLOT();
-    // Use GI_FIRST_VALIDATOR_CURR for proving unknown/existing validators
     mockCLtree = await prepareLocalMerkleTree(await predepositGuarantee.GI_FIRST_VALIDATOR_CURR());
   });
 
+  async function upgradePDG() {
+    const agent = await ctx.getSigner("agent");
+
+    // Get PDG proxy
+    const pdgAddress = ctx.contracts.predepositGuarantee.address;
+    const pdgProxy = (await ethers.getContractAt("OssifiableProxy", pdgAddress)) as OssifiableProxy;
+
+    // Upgrade proxy to the pre-deployed implementation
+    await pdgProxy.connect(agent).proxy__upgradeTo(PDG_IMPLEMENTATION_ADDRESS);
+
+    // Resume PDG after upgrade (it starts paused)
+    const pdg = ctx.contracts.predepositGuarantee;
+    if (await pdg.isPaused()) {
+      await pdg.connect(agent).grantRole(await pdg.RESUME_ROLE(), agent);
+      await pdg.connect(agent).resume();
+      await pdg.connect(agent).revokeRole(await pdg.RESUME_ROLE(), agent);
+    }
+  }
+
+  async function setupExistingVault() {
+    // Attach to the existing vault on mainnet
+    stakingVault = await ethers.getContractAt("StakingVault", MAINNET_VAULT_ADDRESS);
+
+    // Get VaultHub to find the dashboard (owner stored in vaultConnection when connected)
+    const vaultHub = ctx.contracts.vaultHub;
+    const vaultConnection = await vaultHub.vaultConnection(MAINNET_VAULT_ADDRESS);
+    const dashboardAddress = vaultConnection.owner;
+    dashboard = await ethers.getContractAt("Dashboard", dashboardAddress);
+
+    // Get the node operator from the vault
+    const nodeOperatorAddress = await stakingVault.nodeOperator();
+    nodeOperator = await impersonate(nodeOperatorAddress, ether("100"));
+
+    // Get the vault owner (admin of the dashboard)
+    const adminRole = await dashboard.DEFAULT_ADMIN_ROLE();
+    const adminAddress = await dashboard.getRoleMember(adminRole, 0);
+    owner = await impersonate(adminAddress, ether("1000"));
+
+    // Fund the vault
+    await dashboard.connect(owner).fund({ value: ether("100") });
+  }
+
   beforeEach(bailOnFailure);
-  after(async () => await Snapshot.restore(originalSnapshot));
+  after(async function () {
+    if (getMode() === "forking" && originalSnapshot) {
+      await Snapshot.restore(originalSnapshot);
+    }
+  });
 
   function createValidatorContainer(): SSZBLSHelpers.ValidatorStruct {
     return {
@@ -97,11 +157,10 @@ describe("Scenario: PDG specific validator side-deposit, prove and top up", () =
       withdrawalCredentials: withdrawalCredentials,
       effectiveBalance: parseUnits("32", "gwei"),
       slashed: false,
-      // Set epochs to valid values (not FAR_FUTURE_EPOCH) to pass the activation eligibility check
       activationEligibilityEpoch: 100000,
       activationEpoch: 100001,
-      exitEpoch: 2n ** 64n - 1n, // FAR_FUTURE_EPOCH - validator has not exited
-      withdrawableEpoch: 2n ** 64n - 1n, // FAR_FUTURE_EPOCH - validator has not withdrawn
+      exitEpoch: 2n ** 64n - 1n,
+      withdrawableEpoch: 2n ** 64n - 1n,
     };
   }
 
@@ -122,108 +181,70 @@ describe("Scenario: PDG specific validator side-deposit, prove and top up", () =
     };
   }
 
-  it("Should setup: Node Operator configures depositor for PDG", async () => {
-    await expect(predepositGuarantee.connect(nodeOperator).setNodeOperatorDepositor(depositor))
-      .to.emit(predepositGuarantee, "DepositorSet")
-      .withArgs(nodeOperator, depositor, nodeOperator);
-
-    expect(await predepositGuarantee.nodeOperatorDepositor(nodeOperator)).to.equal(depositor);
+  it("vault exists at the expected address with correct withdrawal credentials", async () => {
+    const vaultWC = await stakingVault.withdrawalCredentials();
+    const expectedWC = "0x02000000000000000000000062e0d92cf7b8752b5292b9bcbbace4cfa1633428";
+    expect(vaultWC.toLowerCase()).to.equal(expectedWC.toLowerCase());
   });
 
-  it("Should setup: Top up Node Operator balance for predeposit guarantee", async () => {
+  it("top up Node Operator balance for predeposit guarantee", async () => {
     await expect(
       predepositGuarantee.connect(nodeOperator).topUpNodeOperatorBalance(nodeOperator, { value: ether("1") }),
     )
       .to.emit(predepositGuarantee, "BalanceToppedUp")
       .withArgs(nodeOperator, nodeOperator, ether("1"));
 
-    expect(await predepositGuarantee.nodeOperatorBalance(nodeOperator)).to.deep.equal([ether("1"), 0n]);
+    const balance = await predepositGuarantee.nodeOperatorBalance(nodeOperator);
+    expect(balance[0]).to.be.gte(ether("1"));
   });
 
-  it("Should setup: Set PDG policy to allow proving", async () => {
-    // Set PDG policy to ALLOW_PROVE so we can prove unknown validators
-    await expect(dashboard.connect(owner).setPDGPolicy(PDGPolicy.ALLOW_PROVE))
-      .to.emit(dashboard, "PDGPolicyEnacted")
-      .withArgs(PDGPolicy.ALLOW_PROVE);
+  it("set PDG policy to allow proving", async () => {
+    const currentPolicy = await dashboard.pdgPolicy();
 
-    expect(await dashboard.pdgPolicy()).to.equal(PDGPolicy.ALLOW_PROVE);
+    if (
+      currentPolicy !== BigInt(PDGPolicy.ALLOW_PROVE) &&
+      currentPolicy !== BigInt(PDGPolicy.ALLOW_DEPOSIT_AND_PROVE)
+    ) {
+      await expect(dashboard.connect(owner).setPDGPolicy(PDGPolicy.ALLOW_PROVE))
+        .to.emit(dashboard, "PDGPolicyEnacted")
+        .withArgs(PDGPolicy.ALLOW_PROVE);
+    }
+
+    const policy = await dashboard.pdgPolicy();
+    expect(policy === BigInt(PDGPolicy.ALLOW_PROVE) || policy === BigInt(PDGPolicy.ALLOW_DEPOSIT_AND_PROVE)).to.be.true;
   });
 
-  it("Side deposit: Validator is deposited directly to deposit contract (bypassing PDG)", async () => {
-    const depositAmount = ether("32");
-
-    // Create a deposit with a dummy signature (for side deposit simulation)
-    // In real scenario, this would be a valid BLS signature
-    const signature = zeroPadBytes("0x00", 96);
-
-    const depositDataRoot = computeDepositDataRoot(
-      hexlify(withdrawalCredentials),
-      VALIDATOR_PUBKEY,
-      hexlify(signature),
-      depositAmount,
-    );
-
-    // Side deposit directly to the deposit contract
-    // This simulates a validator being deposited outside of the PDG flow
-    const tx = depositContract
-      .connect(sideDepositor)
-      .deposit(VALIDATOR_PUBKEY, withdrawalCredentials, signature, depositDataRoot, { value: depositAmount });
-
-    await expect(tx)
-      .to.emit(depositContract, "DepositEvent")
-      .withArgs(VALIDATOR_PUBKEY, withdrawalCredentials, toLittleEndian64(toGwei(depositAmount)), anyValue, anyValue);
-
-    // Verify the validator is NOT yet known to PDG (stage should be NONE)
-    const statusBefore = await predepositGuarantee.validatorStatus(VALIDATOR_PUBKEY);
-    expect(statusBefore.stage).to.equal(ValidatorStage.NONE);
-  });
-
-  it("Prove: Side-deposited validator is proven via Dashboard.proveUnknownValidatorsToPDG", async () => {
-    // Create validator container with the vault's WC
+  it("prove validator via Dashboard.proveUnknownValidatorsToPDG", async () => {
     const validator = createValidatorContainer();
-
-    // Generate proof for the validator (simulating it appearing on beacon chain)
     const witness = await addValidatorAndGenerateWitness(validator, 100);
 
-    // Prove the validator through Dashboard
-    // This proves that the side-deposited validator has the correct WC for this vault
-    const tx = dashboard.connect(nodeOperator).proveUnknownValidatorsToPDG([witness]);
+    // Manager role has prove role by default
+    const managerRole = await dashboard.NODE_OPERATOR_MANAGER_ROLE();
+    const managerAddress = await dashboard.getRoleMember(managerRole, 0);
+    const manager = await impersonate(managerAddress, ether("1"));
 
-    await expect(tx)
+    await expect(dashboard.connect(manager).proveUnknownValidatorsToPDG([witness]))
       .to.emit(predepositGuarantee, "ValidatorProven")
+      .withArgs(witness.pubkey, nodeOperator, stakingVault, withdrawalCredentials)
+      .and.to.emit(predepositGuarantee, "ValidatorActivated")
       .withArgs(witness.pubkey, nodeOperator, stakingVault, withdrawalCredentials);
 
-    await expect(tx)
-      .to.emit(predepositGuarantee, "ValidatorActivated")
-      .withArgs(witness.pubkey, nodeOperator, stakingVault, withdrawalCredentials);
-
-    // Verify the validator status is now ACTIVATED
     const status = await predepositGuarantee.validatorStatus(witness.pubkey);
     expect(status.stage).to.equal(ValidatorStage.ACTIVATED);
     expect(status.stakingVault).to.equal(await stakingVault.getAddress());
-    expect(status.nodeOperator).to.equal(nodeOperator.address);
   });
 
   it("Top up: Proven validator can be topped up via PDG", async () => {
-    // Top up amount
-    const topUpAmount = ether("1");
+    const topUpAmount = ether("100");
 
-    // Top up the validator via PDG
-    // This uses vault funds to send additional ETH to the validator
     const tx = predepositGuarantee
-      .connect(depositor)
+      .connect(nodeOperator)
       .topUpExistingValidators([{ pubkey: VALIDATOR_PUBKEY, amount: topUpAmount }]);
 
     await expect(tx)
       .to.emit(depositContract, "DepositEvent")
       .withArgs(VALIDATOR_PUBKEY, withdrawalCredentials, toLittleEndian64(toGwei(topUpAmount)), anyValue, anyValue);
 
-    // Verify vault balance decreased
     await expect(tx).changeEtherBalance(stakingVault, -topUpAmount);
-  });
-
-  it("Validator pubkey format is valid", async () => {
-    // Verify the pubkey is correctly formatted (48 bytes = 96 hex chars)
-    expect(VALIDATOR_PUBKEY.length).to.equal(2 + 96); // 0x + 96 hex chars
   });
 });

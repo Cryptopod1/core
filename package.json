@@ -42,6 +42,7 @@
     "test:integration:scratch:trace": "MODE=scratch hardhat test test/integration/**/*.ts --trace --disabletracer",
     "test:integration:scratch:fulltrace": "MODE=scratch hardhat test test/integration/**/*.ts --fulltrace --disabletracer",
     "test:integration:fork:local": "MODE=scratch hardhat test test/integration/**/*.ts --network local",
+    "test:fork:pdg-validator": "MODE=forking hardhat test test/integration/vaults/scenario/pdg-specific-validator.integration.ts",
     "validate:configs": "yarn hardhat validate-configs",
     "typecheck": "tsc --noEmit",
     "abis:extract": "hardhat abis:extract",
