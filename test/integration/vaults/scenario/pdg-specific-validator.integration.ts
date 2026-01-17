@@ -18,8 +18,10 @@ import {
 
 import {
   ether,
+  getNetworkChainId,
   impersonate,
   LocalMerkleTree,
+  MAINNET_CHAIN_ID,
   PDGPolicy,
   prepareLocalMerkleTree,
   toGwei,
@@ -42,13 +44,6 @@ import { bailOnFailure, Snapshot } from "test/suite";
  * Vault address: 0x62e0d92cf7b8752b5292b9bcbbace4cfa1633428
  */
 describe("Scenario: PDG specific validator prove and top up on mainnet fork", function () {
-  // Skip entire suite if not in forking mode
-  before(function () {
-    if (getMode() !== "forking") {
-      this.skip();
-    }
-  });
-
   let ctx: ProtocolContext;
   let originalSnapshot: string;
 
@@ -78,9 +73,8 @@ describe("Scenario: PDG specific validator prove and top up on mainnet fork", fu
   let slot: bigint;
 
   before(async function () {
-    if (getMode() !== "forking") {
-      return;
-    }
+    // Skip if not mainnet
+    if ((await getNetworkChainId()) !== MAINNET_CHAIN_ID) this.skip();
 
     ctx = await getProtocolContext();
     originalSnapshot = await Snapshot.take();
@@ -145,6 +139,7 @@ describe("Scenario: PDG specific validator prove and top up on mainnet fork", fu
   }
 
   beforeEach(bailOnFailure);
+
   after(async function () {
     if (getMode() === "forking" && originalSnapshot) {
       await Snapshot.restore(originalSnapshot);
