@@ -194,8 +194,8 @@ describe("Scenario: PDG specific validator prove and top up on mainnet fork", fu
       .to.emit(predepositGuarantee, "BalanceToppedUp")
       .withArgs(nodeOperator, nodeOperator, ether("1"));
 
-    const balance = await predepositGuarantee.nodeOperatorBalance(nodeOperator);
-    expect(balance[0]).to.be.gte(ether("1"));
+    const [nodeOperatorBalanceAmount] = await predepositGuarantee.nodeOperatorBalance(nodeOperator);
+    expect(nodeOperatorBalanceAmount).to.be.gte(ether("1"));
   });
 
   it("set PDG policy to allow proving", async () => {
@@ -234,7 +234,7 @@ describe("Scenario: PDG specific validator prove and top up on mainnet fork", fu
     expect(status.stakingVault).to.equal(await stakingVault.getAddress());
   });
 
-  it("Top up: Proven validator can be topped up via PDG", async () => {
+  it("top up: Proven validator can be topped up via PDG", async () => {
     const topUpAmount = ether("100");
 
     const tx = predepositGuarantee
