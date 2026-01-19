@@ -83,7 +83,7 @@ describe("Scenario: PDG specific validator prove and top up on mainnet fork", fu
     // Skip if not mainnet
     const isMainnet = (await getNetworkChainId()) === MAINNET_CHAIN_ID;
     const isForking = getMode() === "forking";
-    if (!isMainnet || isForking) this.skip();
+    if (!isMainnet && !isForking) this.skip();
 
     ctx = await getProtocolContext();
     originalSnapshot = await Snapshot.take();
