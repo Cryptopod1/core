@@ -4,7 +4,7 @@ import { ethers } from "hardhat";
 
 import { EIP712StETH } from "typechain-types";
 
-import { certainAddress, getNetworkChainId } from "lib";
+import { certainAddress } from "lib";
 
 import { Snapshot } from "test/suite";
 
@@ -19,7 +19,7 @@ describe("EIP712StETH.sol", () => {
     domain = {
       name: "Liquid staked Ether 2.0",
       version: "2",
-      chainId: await getNetworkChainId(),
+      chainId: await ethers.provider.send("eth_chainId", []),
       verifyingContract: certainAddress("eip712.test:domain:verifying-contract"),
     };
 

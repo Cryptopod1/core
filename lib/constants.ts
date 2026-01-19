@@ -69,6 +69,3 @@ export const LIMITER_PRECISION_BASE = 10n ** 9n;
 
 export const DISCONNECT_NOT_INITIATED = 2n ** 48n - 1n;
 export const MAX_SANE_SETTLED_GROWTH = MAX_INT104;
-
-export const MAINNET_CHAIN_ID = 1n;
-export const HOODI_CHAIN_ID = 560048n;
