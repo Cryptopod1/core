@@ -1,9 +1,5 @@
 import { ethers } from "hardhat";
 
-export async function getNetworkChainId(): Promise<bigint> {
-  return BigInt(await ethers.provider.send("eth_chainId"));
-}
-
 export async function getNetworkName(): Promise<string> {
   let clientVersion = await ethers.provider.send("web3_clientVersion");
 
