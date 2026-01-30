@@ -48,7 +48,7 @@ jobs:
     timeout-minutes: 120
     env:
       STATE_MATE_BRANCH: "main"
-      MAINNET_REMOTE_RPC_URL: "https://eth.drpc.org"
+      REMOTE_RPC_URL: "${{ secrets.ETH_RPC_URL }}"
 
     steps:
       - name: Checkout state-mate
